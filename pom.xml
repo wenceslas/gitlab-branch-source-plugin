@@ -37,6 +37,8 @@
     <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
     <spotless.check.skip>false</spotless.check.skip>
     <hpi.compatibleSinceVersion>685</hpi.compatibleSinceVersion>
+    <nexus.base.url>repo.appli.dgfip/nexus/content</nexus.base.url>
+    <repo.nexus.base.url>http://${nexus.base.url}</repo.nexus.base.url>
   </properties>
 
   <dependencyManagement>
@@ -63,6 +65,21 @@
   </dependencyManagement>
 
   <dependencies>
+
+    <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>com.google.errorprone</groupId>
+          <artifactId>error_prone_annotations</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
     <dependency>
       <groupId>io.jenkins.plugins</groupId>
       <artifactId>commons-lang3-api</artifactId>
@@ -183,4 +200,5 @@
       <url>https://repo.jenkins-ci.org/public/</url>
     </pluginRepository>
   </pluginRepositories>
+
 </project>

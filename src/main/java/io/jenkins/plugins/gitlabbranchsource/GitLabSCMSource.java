@@ -16,6 +16,8 @@ import com.cloudbees.plugins.credentials.CredentialsProvider;
 import com.cloudbees.plugins.credentials.common.StandardCredentials;
 import com.cloudbees.plugins.credentials.common.StandardListBoxModel;
 import com.cloudbees.plugins.credentials.common.StandardUsernameCredentials;
+import com.google.common.util.concurrent.RateLimiter;
+import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.Nullable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -32,6 +34,7 @@ import hudson.security.ACL;
 import hudson.util.ListBoxModel;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabAvatar;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabLink;
+import io.jenkins.plugins.gitlabbranchsource.helpers.GitlabApiRateLimiters;
 import io.jenkins.plugins.gitlabbranchsource.helpers.Sleeper;
 import io.jenkins.plugins.gitlabserverconfig.credentials.GroupAccessToken;
 import io.jenkins.plugins.gitlabserverconfig.credentials.PersonalAccessToken;
@@ -367,11 +370,15 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
             GitLabApi gitLabApi = apiBuilder(this.getOwner(), serverName, credentialsId);
             getGitlabProject(gitLabApi);
             GitLabSCMSourceContext ctx = new GitLabSCMSourceContext(criteria, observer).withTraits(getTraits());
+
+            RateLimiter limiter = apiRateLimiter();
+
             try (GitLabSCMSourceRequest request = ctx.newRequest(this, listener)) {
                 request.setGitLabApi(gitLabApi);
                 request.setProject(gitlabProject);
                 request.setMembers(getMembers());
                 if (request.isFetchBranches()) {
+                    throttle(limiter);
                     request.setBranches(gitLabApi.getRepositoryApi().getBranches(gitlabProject));
                 }
                 boolean mergeRequestsEnabled = !Boolean.FALSE.equals(gitlabProject.getMergeRequestsEnabled());
@@ -387,6 +394,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                                         !forkedFromProject
                                                 ? "%nUnable to detect if it is a mirror or not still fetching MRs anyway...%n"
                                                 : "%nCollecting MRs for fork except those that target its upstream...%n");
+                        throttle(limiter);
                         Stream<MergeRequest> mrs =
                                 gitLabApi
                                         .getMergeRequestApi()
@@ -407,6 +415,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                     }
                 }
                 if (request.isFetchTags()) {
+                    throttle(limiter);
                     request.setTags(gitLabApi.getTagsApi().getTags(gitlabProject));
                 }
                 if (request.isFetchBranches()) {
@@ -482,6 +491,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                             // This is a hack to get the path with namespace of source project for forked
                             // mrs
                             try {
+                                throttle(limiter);
                                 originProjectPath = gitLabApi
                                         .getProjectApi()
                                         .getProject(mr.getSourceProjectId())
@@ -502,6 +512,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                         }
                         String targetSha;
                         try {
+                            throttle(limiter);
                             targetSha = gitLabApi
                                     .getRepositoryApi()
                                     .getBranch(mr.getTargetProjectId(), mr.getTargetBranch())
@@ -1059,5 +1070,16 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
             mergeRequestContributorCache = new ConcurrentHashMap<>();
         }
         return this;
+    }
+
+    @CheckForNull
+    private RateLimiter apiRateLimiter() {
+        GitLabServer server = GitLabServers.get().findServer(serverName);
+        if (server == null) return null;
+        return GitlabApiRateLimiters.getOrNull(server.getServerUrl(), server.getApiPermitsPerSecond());
+    }
+
+    private static void throttle(@CheckForNull RateLimiter limiter) {
+        if (limiter != null) limiter.acquire();
     }
 }

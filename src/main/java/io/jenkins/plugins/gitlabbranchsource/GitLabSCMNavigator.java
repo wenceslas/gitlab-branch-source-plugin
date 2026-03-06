@@ -14,6 +14,7 @@ import com.cloudbees.plugins.credentials.CredentialsMatchers;
 import com.cloudbees.plugins.credentials.CredentialsProvider;
 import com.cloudbees.plugins.credentials.common.StandardCredentials;
 import com.cloudbees.plugins.credentials.common.StandardListBoxModel;
+import com.google.common.util.concurrent.RateLimiter;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Extension;
@@ -31,6 +32,7 @@ import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabGroup;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabLink;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabOwner;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabUser;
+import io.jenkins.plugins.gitlabbranchsource.helpers.GitlabApiRateLimiters;
 import io.jenkins.plugins.gitlabserverconfig.credentials.helpers.GitLabCredentialMatcher;
 import io.jenkins.plugins.gitlabserverconfig.servers.GitLabServer;
 import io.jenkins.plugins.gitlabserverconfig.servers.GitLabServers;
@@ -237,7 +239,11 @@ public class GitLabSCMNavigator extends SCMNavigator {
             GitLabApi gitLabApi = apiBuilder(observer.getContext(), serverName, credentialsId);
             getGitlabOwner(gitLabApi);
             List<Project> projects;
+
+            RateLimiter limiter = apiRateLimiter();
+
             if (gitlabOwner instanceof GitLabUser) {
+                throttle(limiter);
                 // Even returns the group projects owned by the user
                 projects = gitLabApi.getProjectApi().getUserProjects(projectOwner, new ProjectFilter().withOwned(true));
             } else {
@@ -247,6 +253,7 @@ public class GitLabSCMNavigator extends SCMNavigator {
                 groupProjectsFilter.withIncludeSubGroups(wantSubGroupProjects);
                 groupProjectsFilter.withShared(request.wantSharedProjects());
                 // If projectOwner is a subgroup, it will only return projects in the subgroup
+                throttle(limiter);
                 projects = gitLabApi.getGroupApi().getProjects(projectOwner, groupProjectsFilter);
             }
             int count = 0;
@@ -295,6 +302,7 @@ public class GitLabSCMNavigator extends SCMNavigator {
                             // sending 'null' to GitLab will ignore the value, when we want to update it to be empty.
                             secretToken = "";
                         }
+                        throttle(limiter);
                         observer.getListener()
                                 .getLogger()
                                 .format(
@@ -607,5 +615,16 @@ public class GitLabSCMNavigator extends SCMNavigator {
         public List<SCMTrait<? extends SCMTrait<?>>> getTraitsDefaults() {
             return new ArrayList<>(delegate.getTraitsDefaults());
         }
+    }
+
+    @CheckForNull
+    private RateLimiter apiRateLimiter() {
+        GitLabServer server = GitLabServers.get().findServer(serverName);
+        if (server == null) return null;
+        return GitlabApiRateLimiters.getOrNull(server.getServerUrl(), server.getApiPermitsPerSecond());
+    }
+
+    private static void throttle(@CheckForNull RateLimiter limiter) {
+        if (limiter != null) limiter.acquire();
     }
 }
