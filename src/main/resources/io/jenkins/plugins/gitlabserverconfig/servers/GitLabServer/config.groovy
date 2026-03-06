@@ -47,7 +47,13 @@ f.advanced() {
           field: "apiPermitsPerSecond",
           description: "Global requests/sec for GitLab API (<=0 disables)") {
     f.textbox()
-  }
+    }
+    f.entry(title: _("API quota (requests / 15 min)"),     
+        field: "apiRequestsPer15Min",
+        description: _("Maximum GitLab API requests allowed per 15-minute sliding window. 0 disables throttling."))
+   {
+    f.number(min: "0", step: "1")
+   }
 }
 
 f.validateButton(

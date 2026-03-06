@@ -32,6 +32,7 @@ import hudson.model.TaskListener;
 import hudson.scm.SCM;
 import hudson.security.ACL;
 import hudson.util.ListBoxModel;
+import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabApiQuotaLimiters;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabAvatar;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabLink;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitlabApiRateLimiters;
@@ -371,14 +372,15 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
             getGitlabProject(gitLabApi);
             GitLabSCMSourceContext ctx = new GitLabSCMSourceContext(criteria, observer).withTraits(getTraits());
 
-            RateLimiter limiter = apiRateLimiter();
+            RateLimiter rateLimiter = apiRateLimiter();
+            GitLabApiQuotaLimiters.SlidingWindowQuotaLimiter quotaLimiter = apiQuotaLimiter();
 
             try (GitLabSCMSourceRequest request = ctx.newRequest(this, listener)) {
                 request.setGitLabApi(gitLabApi);
                 request.setProject(gitlabProject);
                 request.setMembers(getMembers());
                 if (request.isFetchBranches()) {
-                    throttle(limiter);
+                    throttle(quotaLimiter, rateLimiter);
                     request.setBranches(gitLabApi.getRepositoryApi().getBranches(gitlabProject));
                 }
                 boolean mergeRequestsEnabled = !Boolean.FALSE.equals(gitlabProject.getMergeRequestsEnabled());
@@ -394,7 +396,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                                         !forkedFromProject
                                                 ? "%nUnable to detect if it is a mirror or not still fetching MRs anyway...%n"
                                                 : "%nCollecting MRs for fork except those that target its upstream...%n");
-                        throttle(limiter);
+                        throttle(quotaLimiter, rateLimiter);
                         Stream<MergeRequest> mrs =
                                 gitLabApi
                                         .getMergeRequestApi()
@@ -415,7 +417,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                     }
                 }
                 if (request.isFetchTags()) {
-                    throttle(limiter);
+                    throttle(quotaLimiter, rateLimiter);
                     request.setTags(gitLabApi.getTagsApi().getTags(gitlabProject));
                 }
                 if (request.isFetchBranches()) {
@@ -491,7 +493,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                             // This is a hack to get the path with namespace of source project for forked
                             // mrs
                             try {
-                                throttle(limiter);
+                                throttle(quotaLimiter, rateLimiter);
                                 originProjectPath = gitLabApi
                                         .getProjectApi()
                                         .getProject(mr.getSourceProjectId())
@@ -512,7 +514,7 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
                         }
                         String targetSha;
                         try {
-                            throttle(limiter);
+                            throttle(quotaLimiter, rateLimiter);
                             targetSha = gitLabApi
                                     .getRepositoryApi()
                                     .getBranch(mr.getTargetProjectId(), mr.getTargetBranch())
@@ -1079,7 +1081,23 @@ public class GitLabSCMSource extends AbstractGitSCMSource {
         return GitlabApiRateLimiters.getOrNull(server.getServerUrl(), server.getApiPermitsPerSecond());
     }
 
-    private static void throttle(@CheckForNull RateLimiter limiter) {
-        if (limiter != null) limiter.acquire();
+    @CheckForNull
+    private GitLabApiQuotaLimiters.SlidingWindowQuotaLimiter apiQuotaLimiter() {
+        GitLabServer server = GitLabServers.get().findServer(serverName);
+        if (server == null) {
+            return null;
+        }
+        return GitLabApiQuotaLimiters.getOrNull(server.getServerUrl(), server.getApiRequestsPer15Min());
+    }
+
+    private static void throttle(
+            @CheckForNull GitLabApiQuotaLimiters.SlidingWindowQuotaLimiter quotaLimiter,
+            @CheckForNull RateLimiter rateLimiter)
+            throws InterruptedException {
+        if (quotaLimiter != null) {
+            quotaLimiter.acquire();
+        }
+
+        if (rateLimiter != null) rateLimiter.acquire();
     }
 }

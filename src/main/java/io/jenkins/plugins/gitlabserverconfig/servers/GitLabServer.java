@@ -548,6 +548,24 @@ public class GitLabServer extends AbstractDescribableImpl<GitLabServer> {
             }
         }
 
+        public FormValidation doCheckApiRequestsPer15Min(@QueryParameter String value) {
+            if (value == null || value.trim().isEmpty()) {
+                return FormValidation.ok();
+            }
+            try {
+                int v = Integer.parseInt(value.trim());
+                if (v < 0) {
+                    return FormValidation.error("Value must be greater than or equal to 0");
+                }
+                if (v > 100000) {
+                    return FormValidation.warning("High value");
+                }
+                return FormValidation.ok();
+            } catch (NumberFormatException e) {
+                return FormValidation.error("An integer value is expected");
+            }
+        }
+
         @NonNull
         @Override
         public String getDisplayName() {
@@ -666,5 +684,18 @@ public class GitLabServer extends AbstractDescribableImpl<GitLabServer> {
     @DataBoundSetter
     public void setApiPermitsPerSecond(@CheckForNull Double apiPermitsPerSecond) {
         this.apiPermitsPerSecond = apiPermitsPerSecond;
+    }
+
+    @CheckForNull
+    private Integer apiRequestsPer15Min;
+
+    @CheckForNull
+    public Integer getApiRequestsPer15Min() {
+        return apiRequestsPer15Min;
+    }
+
+    @DataBoundSetter
+    public void setApiRequestsPer15Min(@CheckForNull Integer apiRequestsPer15Min) {
+        this.apiRequestsPer15Min = apiRequestsPer15Min;
     }
 }

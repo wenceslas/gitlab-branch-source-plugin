@@ -27,6 +27,7 @@ import hudson.model.TaskListener;
 import hudson.security.ACL;
 import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
+import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabApiQuotaLimiters;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabAvatar;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabGroup;
 import io.jenkins.plugins.gitlabbranchsource.helpers.GitLabLink;
@@ -240,10 +241,11 @@ public class GitLabSCMNavigator extends SCMNavigator {
             getGitlabOwner(gitLabApi);
             List<Project> projects;
 
-            RateLimiter limiter = apiRateLimiter();
+            RateLimiter rateLimiter = apiRateLimiter();
+            GitLabApiQuotaLimiters.SlidingWindowQuotaLimiter quotaLimiter = apiQuotaLimiter();
 
             if (gitlabOwner instanceof GitLabUser) {
-                throttle(limiter);
+                throttle(quotaLimiter, rateLimiter);
                 // Even returns the group projects owned by the user
                 projects = gitLabApi.getProjectApi().getUserProjects(projectOwner, new ProjectFilter().withOwned(true));
             } else {
@@ -253,7 +255,7 @@ public class GitLabSCMNavigator extends SCMNavigator {
                 groupProjectsFilter.withIncludeSubGroups(wantSubGroupProjects);
                 groupProjectsFilter.withShared(request.wantSharedProjects());
                 // If projectOwner is a subgroup, it will only return projects in the subgroup
-                throttle(limiter);
+                throttle(quotaLimiter, rateLimiter);
                 projects = gitLabApi.getGroupApi().getProjects(projectOwner, groupProjectsFilter);
             }
             int count = 0;
@@ -302,7 +304,7 @@ public class GitLabSCMNavigator extends SCMNavigator {
                             // sending 'null' to GitLab will ignore the value, when we want to update it to be empty.
                             secretToken = "";
                         }
-                        throttle(limiter);
+                        throttle(quotaLimiter, rateLimiter);
                         observer.getListener()
                                 .getLogger()
                                 .format(
@@ -624,7 +626,23 @@ public class GitLabSCMNavigator extends SCMNavigator {
         return GitlabApiRateLimiters.getOrNull(server.getServerUrl(), server.getApiPermitsPerSecond());
     }
 
-    private static void throttle(@CheckForNull RateLimiter limiter) {
-        if (limiter != null) limiter.acquire();
+    @CheckForNull
+    private GitLabApiQuotaLimiters.SlidingWindowQuotaLimiter apiQuotaLimiter() {
+        GitLabServer server = GitLabServers.get().findServer(serverName);
+        if (server == null) {
+            return null;
+        }
+        return GitLabApiQuotaLimiters.getOrNull(server.getServerUrl(), server.getApiRequestsPer15Min());
+    }
+
+    private static void throttle(
+            @CheckForNull GitLabApiQuotaLimiters.SlidingWindowQuotaLimiter quotaLimiter,
+            @CheckForNull RateLimiter rateLimiter)
+            throws InterruptedException {
+        if (quotaLimiter != null) {
+            quotaLimiter.acquire();
+        }
+
+        if (rateLimiter != null) rateLimiter.acquire();
     }
 }
